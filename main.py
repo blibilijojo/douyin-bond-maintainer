@@ -1,12 +1,13 @@
 import sys
-from time import  time
+from time import time
 import traceback
-from playwright.sync_api import sync_playwright , TimeoutError
+from playwright.sync_api import sync_playwright, TimeoutError
 from config import get_config
-from utils import parse_to_playwright_cookies
+from utils import parse_to_playwright_cookies, generate_fire_message
 
 print('开始执行...')
 start_time = time()
+
 with sync_playwright() as playwright:
     try:
         config = get_config()
@@ -22,45 +23,34 @@ with sync_playwright() as playwright:
 
         page = context.new_page()
 
-        page.goto("https://www.douyin.com/?recommend=1")
+        # 直接访问创作者平台聊天页面（根据油猴脚本的匹配URL）
+        page.goto("https://creator.douyin.com/creator-micro/data/following/chat")
 
         # 等待页面加载完成
         page.wait_for_load_state("networkidle")
         
-        print('等待弹窗1')
-        # 询问是否保存登陆信息 关闭
+        print('页面加载完成，开始查找私信列表')
+        
+        # 等待私信列表加载
         try:
-            page.get_by_text("取消").click(timeout=10000)
+            # 等待聊天列表区域加载
+            page.wait_for_selector(".chat-list", timeout=30000)  # 替换为实际的class名
+            print('私信列表加载成功')
         except TimeoutError:
-            print('没有找到保存登陆信息弹窗')
+            print('私信列表加载超时，尝试刷新页面')
+            page.reload()
+            page.wait_for_load_state("networkidle")
+            page.wait_for_selector(".chat-list", timeout=30000)
         
-        print('查找并点击私信按钮')
-        # 根据提供的HTML结构，使用更精确的选择器定位私信按钮
-        private_chat_locators = [
-            # 1. 直接点击包含"私信"文本的p标签
-            page.get_by_text("私信"),
-            # 2. 点击p标签的父元素div
-            page.locator("p.jenVD1aU").filter(has_text="私信").locator(".."),
-            # 3. 使用data-e2e属性定位
-            page.locator("[data-e2e*='button']").filter(has_text="私信"),
-            # 4. 使用完整的class定位
-            page.locator(".vUlcfDbY.d5oQ4GPx.XuCIp3h8").filter(has_text="私信"),
-            # 5. 使用XPath定位包含私信文本的div
-            page.locator("//div[contains(., '私信')]").first
-        ]
-        
-        private_chat_found = False
-        for locator in private_chat_locators:
-            try:
-                locator.click(timeout=10000)
-                private_chat_found = True
-                print('私信按钮点击成功')
-                break
-            except Exception as e:
-                continue
-        
-        if not private_chat_found:
-            raise RuntimeError('未找到私信按钮，请检查页面结构是否变化')
+        # 生成续火消息
+        fire_message = generate_fire_message(
+            base_msg=config['msg'],
+            use_hitokoto=config['use_hitokoto'],
+            use_txtapi=config['use_txtapi'],
+            txtapi_url=config['txtapi_url'],
+            custom_template=config['custom_template']
+        )
+        print(f'生成的续火消息：{fire_message[:20]}...')  # 只显示前20个字符
         
         # 循环处理多个用户
         for nickname in config['nicknames']:
@@ -69,18 +59,28 @@ with sync_playwright() as playwright:
             
             # 使用多种方式查找用户
             user_locators = [
-                page.get_by_text(f"{nickname}", exact=True).first,
-                page.locator(f"[title*='{nickname}']").first,
+                # 1. 精确匹配用户名
+                page.get_by_text(f"{nickname}", exact=True),
+                # 2. 聊天列表中查找用户名
+                page.locator(".chat-item").filter(has_text=f"{nickname}"),  # 替换为实际的class名
+                # 3. 模糊匹配包含用户名的元素
                 page.locator(f"//*[contains(text(), '{nickname}')]").first,
-                page.locator(f"[data-nickname='{nickname}']").first
+                # 4. 使用data属性定位
+                page.locator(f"[data-nickname='{nickname}']"),
+                # 5. 使用title属性定位
+                page.locator(f"[title*='{nickname}']")
             ]
             
             user_found = False
             for locator in user_locators:
                 try:
-                    locator.click(timeout=10000)
+                    locator.click(timeout=15000)
                     user_found = True
                     print(f'找到并点击用户：{nickname}')
+                    
+                    # 等待聊天窗口加载
+                    page.wait_for_selector(".chat-window", timeout=10000)  # 替换为实际的class名
+                    print('聊天窗口加载成功')
                     break
                 except Exception as e:
                     continue
@@ -89,22 +89,33 @@ with sync_playwright() as playwright:
                 print(f'未找到用户：{nickname}，跳过该用户')
                 continue
             
-            print('输入文本并回车')
+            print('查找输入框并发送消息')
             
             # 使用更通用的方式查找输入框
             input_locators = [
+                # 1. 直接查找文本框
                 page.get_by_role("textbox"),
+                # 2. 查找textarea元素
                 page.locator("textarea"),
+                # 3. 根据placeholder查找
                 page.locator("[placeholder*='发送消息']"),
-                page.locator("[id*='input']").locator("[type='text']")
+                # 4. 根据class查找
+                page.locator(".chat-input"),  # 替换为实际的class名
+                # 5. 根据id查找
+                page.locator("#chat-input")  # 替换为实际的id名
             ]
             
             input_found = False
             for locator in input_locators:
                 try:
+                    # 点击输入框
                     locator.click(timeout=5000)
-                    locator.fill(f"{config['msg']}")
-                    locator.press("Enter")
+                    # 清除现有内容（如果有）
+                    locator.clear(timeout=5000)
+                    # 输入消息
+                    locator.fill(fire_message, timeout=5000)
+                    # 发送消息
+                    locator.press("Enter", timeout=5000)
                     input_found = True
                     print('消息发送成功')
                     break
@@ -115,61 +126,41 @@ with sync_playwright() as playwright:
                 print(f'未找到输入框，无法给用户 {nickname} 发送消息')
                 # 尝试返回私信列表
                 try:
-                    page.goto("https://www.douyin.com/message")
+                    page.goto("https://creator.douyin.com/creator-micro/data/following/chat")
                     page.wait_for_load_state("networkidle")
                 except Exception as e:
                     pass
                 continue
             
+            # 检查发送失败状态
             try:
                 page.locator("text=发送失败").wait_for(timeout=10000)
                 print(f'给 {nickname} 发送失败！')
             except TimeoutError as e:
                 print(f'给 {nickname} 发送成功！')
             
-            # 返回到私信列表页
-            print('返回私信列表页')
-            back_button_locators = [
-                page.get_by_text("返回"),
-                page.get_by_role("button").filter(has_text="返回"),
-                page.locator("[aria-label*='返回']"),
-                page.locator("[title*='返回']"),
-                page.locator("//*[contains(text(), '返回')]").first
-            ]
-            
-            back_button_found = False
-            for locator in back_button_locators:
-                try:
-                    locator.click(timeout=5000)
-                    back_button_found = True
-                    print('返回按钮点击成功')
-                    break
-                except Exception as e:
-                    continue
-            
-            if not back_button_found:
-                print('未找到返回按钮，尝试刷新页面回到私信列表')
-                page.goto("https://www.douyin.com/message")
-                page.wait_for_load_state("networkidle")
-
+            # 等待消息发送完成，然后继续下一个用户
+            page.wait_for_timeout(2000)
+        
         print("\n所有用户处理完成！")
-        print("耗时："+str(int(time() - start_time)))
-        # sleep(10)
-
+        print(f"耗时：{int(time() - start_time)}秒")
+        
         print('关闭浏览器')
-
         context.close()
         browser.close()
+        
+        print('执行完成！')
+        
     except Exception as e:
-    # error_msg = str(e)
         error_details = traceback.format_exc()
-        print(error_details)
+        print(f'发生错误：{error_details}')
 
-        try :
+        try:
             # 确保page对象存在时才尝试截图
             if 'page' in locals():
-                screenshot = page.screenshot(path='error.png',full_page=True)
+                screenshot = page.screenshot(path='error.png', full_page=True)
+                print('错误截图已保存')
         except Exception as e:
-            print(e)
+            print(f'保存截图失败：{e}')
 
         sys.exit(1)

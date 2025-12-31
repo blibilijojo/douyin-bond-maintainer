@@ -53,6 +53,10 @@ jobs:
           echo "NICKNAME=${{ secrets.NICKNAME }}" >> $GITHUB_ENV
           echo "MSG=${{ secrets.MSG }}" >> $GITHUB_ENV
           echo "PROXY=${{ secrets.PROXY }}" >> $GITHUB_ENV
+          echo "USE_HITOKOTO=${{ secrets.USE_HITOKOTO || 'true' }}" >> $GITHUB_ENV
+          echo "USE_TXTAPI=${{ secrets.USE_TXTAPI || 'true' }}" >> $GITHUB_ENV
+          echo "TXTAPI_URL=${{ secrets.TXTAPI_URL || 'https://v1.hitokoto.cn/?encode=text' }}" >> $GITHUB_ENV
+          echo "CUSTOM_TEMPLATE=${{ secrets.CUSTOM_TEMPLATE || '' }}" >> $GITHUB_ENV
 
       - name: Run Douyin Bond Maintainer
         run: python main.py
