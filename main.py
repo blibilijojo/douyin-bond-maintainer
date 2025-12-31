@@ -1,9 +1,56 @@
 import sys
 from time import time
 import traceback
+import json
 from playwright.sync_api import sync_playwright, TimeoutError
 from config import get_config
 from utils import parse_to_playwright_cookies, generate_fire_message
+
+# 使用Playwright获取API内容
+def get_api_content(page, url, is_json=True):
+    try:
+        # 创建新页面用于API请求
+        api_page = page.context.new_page()
+        
+        # 访问API URL
+        api_page.goto(url, wait_until="networkidle")
+        
+        # 获取页面内容
+        content = api_page.content()
+        
+        # 关闭API页面
+        api_page.close()
+        
+        if is_json:
+            # 解析JSON内容
+            data = json.loads(content)
+            return data
+        else:
+            # 返回纯文本内容
+            return content.strip()
+    except Exception as e:
+        print(f'API请求失败: {e}')
+        return None
+
+# 获取一言API内容
+def get_hitokoto_content(page):
+    try:
+        data = get_api_content(page, "https://v1.hitokoto.cn/?c=a&c=b&c=c&c=d&c=e&c=f")
+        if data:
+            return data.get("hitokoto", "") + "\n—— " + data.get("from", "")
+    except Exception as e:
+        print(f'获取一言API失败: {e}')
+    return ""
+
+# 获取TXTAPI内容
+def get_txtapi_content(page, url):
+    try:
+        content = get_api_content(page, url, is_json=False)
+        if content:
+            return content
+    except Exception as e:
+        print(f'获取TXTAPI失败: {e}')
+    return ""
 
 print('开始执行...')
 start_time = time()
@@ -23,6 +70,29 @@ with sync_playwright() as playwright:
 
         page = context.new_page()
 
+        # 生成续火消息，先获取API内容
+        hitokoto_content = ""
+        txtapi_content = ""
+        
+        # 获取一言API内容
+        if config['use_hitokoto']:
+            print('正在获取一言API内容...')
+            hitokoto_content = get_hitokoto_content(page)
+        
+        # 获取TXTAPI内容
+        if config['use_txtapi'] and config['txtapi_url']:
+            print('正在获取TXTAPI内容...')
+            txtapi_content = get_txtapi_content(page, config['txtapi_url'])
+        
+        # 生成消息
+        fire_message = generate_fire_message(
+            base_msg=config['msg'],
+            custom_template=config['custom_template'],
+            hitokoto_content=hitokoto_content,
+            txtapi_content=txtapi_content
+        )
+        print(f'生成的续火消息：{fire_message[:20]}...')  # 只显示前20个字符
+        
         # 直接访问创作者平台聊天页面（根据油猴脚本的匹配URL）
         page.goto("https://creator.douyin.com/creator-micro/data/following/chat")
 
@@ -34,23 +104,13 @@ with sync_playwright() as playwright:
         # 等待私信列表加载
         try:
             # 等待聊天列表区域加载
-            page.wait_for_selector(".chat-list", timeout=30000)  # 替换为实际的class名
-            print('私信列表加载成功')
+            page.wait_for_selector("div", timeout=30000)  # 等待任意div元素加载
+            print('页面元素加载成功')
         except TimeoutError:
-            print('私信列表加载超时，尝试刷新页面')
+            print('页面加载超时，尝试刷新页面')
             page.reload()
             page.wait_for_load_state("networkidle")
-            page.wait_for_selector(".chat-list", timeout=30000)
-        
-        # 生成续火消息
-        fire_message = generate_fire_message(
-            base_msg=config['msg'],
-            use_hitokoto=config['use_hitokoto'],
-            use_txtapi=config['use_txtapi'],
-            txtapi_url=config['txtapi_url'],
-            custom_template=config['custom_template']
-        )
-        print(f'生成的续火消息：{fire_message[:20]}...')  # 只显示前20个字符
+            page.wait_for_selector("div", timeout=30000)
         
         # 循环处理多个用户
         for nickname in config['nicknames']:
