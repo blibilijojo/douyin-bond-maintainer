@@ -14,10 +14,13 @@ def get_config():
 
     if cookies == '' or nickname == '':
         raise ValueError("SECRETS 未正确配置！")
+    
+    # 支持多用户，使用逗号分隔昵称
+    nicknames = [name.strip() for name in nickname.split(',')] if nickname else []
 
     return {
         'cookies' : cookies,
-        'nickname' : nickname,
+        'nicknames' : nicknames,
         'msg' : msg,
         'proxy' : proxy
     }
